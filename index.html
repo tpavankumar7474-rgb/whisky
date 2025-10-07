@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>World Map - Grafana Clustering</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  body, html { margin:0; padding:0; height:100%; }
+  #map { width:100%; height:100%; }
+  .cluster-marker {
+    background: rgba(255,0,0,0.6);
+    color: white;
+    border-radius: 50%;
+    text-align: center;
+    font-weight: bold;
+    line-height: 30px;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid white;
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<!-- Supercluster JS -->
+<script src="https://unpkg.com/supercluster@7.1.5/dist/supercluster.min.js"></script>
+
+<script>
+// Initialize map (world view)
+const map = L.map('map').setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
+let markersLayer = L.layerGroup().addTo(map);
+let index = null;
+
+// Function to load data into Supercluster
+function loadData(dataArray){
+  if(!dataArray || !dataArray.length) return;
+
+  const geoData = dataArray.map(d => ({
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [d.lon, d.lat] },
+    properties: { state: d.state, count: d.count }
+  }));
+
+  index = new Supercluster({ radius: 60, maxZoom: 17 });
+  index.load(geoData);
+
+  updateClusters();
+}
+
+// Function to render clusters
+function updateClusters(){
+  if(!index) return;
+  markersLayer.clearLayers();
+
+  const bounds = map.getBounds();
+  const bbox = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+  const zoom = map.getZoom();
+  const clusters = index.getClusters(bbox, zoom);
+
+  clusters.forEach(c => {
+    const [lon, lat] = c.geometry.coordinates;
+
+    if(c.properties.cluster){
+      const count = c.properties.point_count;
+      const clusterMarker = L.marker([lat, lon], {
+        icon: L.divIcon({ html:`<div class="cluster-marker">${count}</div>`, className:'' })
+      });
+      clusterMarker.on('click', ()=> map.setView([lat, lon], map.getZoom()+2));
+      markersLayer.addLayer(clusterMarker);
+    } else {
+      const marker = L.marker([lat, lon]);
+      const state = c.properties.state;
+      const count = c.properties.count;
+      marker.bindTooltip(`<b>${state}</b><br>Count: ${count}<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lon.toFixed(4)}`);
+      marker.bindPopup(`<b>State:</b> ${state}<br>Count: ${count}<br>Lat: ${lat.toFixed(4)}<br>Lon: ${lon.toFixed(4)}`);
+      markersLayer.addLayer(marker);
+    }
+  });
+}
+
+// Re-render clusters when map moves/zooms
+map.on('moveend', updateClusters);
+
+// === Grafana Integration ===
+// This part gets data from Grafana's HTML panel
+// Assumes your query returns: state, lat, long, count
+try {
+  const series = data.series[0]; // First query
+  if(series && series.fields.length >= 4){
+    const fields = series.fields;
+    const rowCount = fields[0].values.length;
+    const grafanaData = [];
+
+    for(let i=0;i<rowCount;i++){
+      const state = fields[0].values.get(i);
+      const lat = fields[1].values.get(i);
+      const lon = fields[2].values.get(i);
+      const count = fields[3].values.get(i);
+
+      if(lat != null && lon != null){
+        grafanaData.push({ state, lat, lon, count });
+      }
+    }
+
+    loadData(grafanaData);
+  } else {
+    console.warn("No valid Grafana data. Loading fallback point.");
+    loadData([{ state:"Hail", lat:27.5219, lon:41.6907, count:1 }]);
+  }
+} catch(e){
+  console.error("Error reading Grafana data", e);
+  loadData([{ state:"Hail", lat:27.5219, lon:41.6907, count:1 }]);
+}
+
+</script>
+</body>
+</html>

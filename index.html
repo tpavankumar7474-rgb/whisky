@@ -7,26 +7,11 @@
 
 <!-- Leaflet CSS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<!-- MarkerCluster CSS -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
 
 <style>
   body, html { margin:0; padding:0; height:100%; }
   #map { width:100%; height:100%; }
-  .cluster-marker {
-    background: rgba(255,0,0,0.6);
-    color: white;
-    border-radius: 50%;
-    text-align: center;
-    font-weight: bold;
-    line-height: 30px;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: 2px solid white;
-  }
 </style>
 </head>
 <body>
@@ -34,9 +19,6 @@
 
 <!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<!-- Supercluster JS -->
-<script src="https://unpkg.com/supercluster@7.1.5/dist/supercluster.min.js"></script>
-<!-- MarkerCluster JS -->
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 
 <script>
@@ -47,38 +29,34 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// Marker cluster layer
-let markersLayer = L.markerClusterGroup().addTo(map);
+// Marker cluster group
+const markers = L.markerClusterGroup();
+map.addLayer(markers);
 
-// === Function to load data into map ===
+// === Function to load Grafana data ===
 function loadData(dataArray){
-  if(!dataArray || !dataArray.length) return;
+  if (!dataArray || !dataArray.length) return;
 
-  markersLayer.clearLayers();
+  markers.clearLayers();
 
   dataArray.forEach(d => {
-    const marker = L.circleMarker([d.lat, d.lon], {
-      radius: Math.min(d.count / 2 + 3, 15),
-      color: d.count > 50 ? "red" : d.count > 20 ? "orange" : "green",
-      fillOpacity: 0.7
-    }).bindTooltip(`<b>${d.state}</b><br>Count: ${d.count}<br>Lat: ${d.lat.toFixed(4)}<br>Lon: ${d.lon.toFixed(4)}`)
-      .bindPopup(`<b>State:</b> ${d.state}<br>Count: ${d.count}<br>Lat: ${d.lat.toFixed(4)}<br>Lon: ${d.lon.toFixed(4)}`);
+    if (!d.lat || !d.long) return;
 
-    markersLayer.addLayer(marker);
+    const marker = L.marker([d.lat, d.long])
+      .bindPopup(`<b>${d.state}</b><br>Count: ${d.count}<br>Lat: ${d.lat.toFixed(4)}<br>Lon: ${d.long.toFixed(4)}`);
+    markers.addLayer(marker);
   });
 
-  map.addLayer(markersLayer);
-
-  // Auto-fit map bounds to all markers
-  const group = new L.featureGroup(markersLayer.getLayers());
-  if(group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.2));
+  // Fit bounds to data
+  const group = new L.featureGroup(markers.getLayers());
+  if (group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.2));
 }
 
-// === Listen for Grafana data ===
+// === Listen for Grafana message ===
 window.addEventListener("message", (event) => {
   const data = event.data;
-  if(!data || !data.incidentData) return;
-
+  if (!data || !data.incidentData) return;
+  console.log(`✅ Received ${data.incidentData.length} records from Grafana`);
   loadData(data.incidentData);
 });
 </script>

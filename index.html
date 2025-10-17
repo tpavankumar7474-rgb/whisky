@@ -69,6 +69,7 @@
           opacity: 0.9
         });
 
+        // ONLY single marker clicks send message to parent
         marker.on("click", (e) => {
           const payload = {
             type: "mapClick",
@@ -86,22 +87,11 @@
         bounds.push([lat, long]);
       });
 
-      // Cluster click
+      // CLUSTER CLICK: do NOT send variable update, just open popup
       clusterGroup.on("clusterclick", (a) => {
         const markers = a.layer.getAllChildMarkers();
         if (markers.length > 0) {
           const first = markers[0].getLatLng();
-          const payload = {
-            type: "mapClick",
-            state: markers[0].options.title,
-            lat: first.lat,
-            long: first.lng,
-            count: markers.length,
-            label: `Cluster: ${markers[0].options.title}`
-          };
-          window.parent.postMessage(payload, "*");
-          console.log("Iframe: cluster clicked, payload:", payload);
-
           const popup = `
             <strong>Cluster size:</strong> ${markers.length}<br/>
             <strong>First state:</strong> ${markers[0].options.title}<br/>
@@ -112,6 +102,9 @@
             .setLatLng(a.latlng)
             .setContent(popup)
             .openOn(map);
+
+          console.log("Iframe: cluster clicked, popup shown but no variable update");
+          // NOTE: NO window.parent.postMessage here
         }
       });
 

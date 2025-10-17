@@ -1,140 +1,182 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Incident Map</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Incident Map</title>
 
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
 
-<style>
-  html, body, #map { height: 100%; margin: 0; padding: 0; }
-</style>
+  <style>
+    html, body, #map {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
 </head>
 <body>
-<div id="map"></div>
+  <div id="map"></div>
 
-<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
 
-<script>
-const map = L.map('map').setView([24.7136, 46.6753], 6);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 18,
-  attribution: '© OpenStreetMap contributors'
-}).addTo(map);
+  <script>
+    const map = L.map('map').setView([24.7136, 46.6753], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
 
-let markerCluster = L.markerClusterGroup();
-map.addLayer(markerCluster);
+    let markerCluster = L.markerClusterGroup();
+    map.addLayer(markerCluster);
 
-let markerDataMap = new Map();
-let currentDataHash = null;
-let initialViewSet = false;
+    let markerDataMap = new Map();
+    let currentDataHash = null;
+    let initialViewSet = false;
 
-// --- Utility: Create a data hash to detect identical data ---
-function generateDataHash(data) {
-  if (!data || !data.lat) return null;
-  const dataForHash = {
-    length: data.lat.length,
-    first: `${data.lat[0]}_${data.long[0]}_${data.state[0]}`,
-    last: `${data.lat[data.lat.length - 1]}_${data.long[data.lat.length - 1]}_${data.state[data.lat.length - 1]}`
-  };
-  return JSON.stringify(dataForHash);
-}
+    function generateDataHash(data) {
+      if (!data || !data.lat) return null;
+      const dataForHash = {
+        length: data.lat.length,
+        first: `${data.lat[0]}_${data.long[0]}_${data.state[0]}`,
+        last: `${data.lat[data.lat.length - 1]}_${data.long[data.lat.length - 1]}_${data.state[data.lat.length - 1]}`
+      };
+      return JSON.stringify(dataForHash);
+    }
 
-// === LISTEN FOR GRAFANA MESSAGES ===
-window.addEventListener('message', (event) => {
-  console.log("=== MAP: Message received from Grafana ===", event.data);
-  const data = event.data;
-  if (!data || !data.lat || !data.long || !data.state) return;
+    // === GRAFANA -> MAP: Receive data ===
+    window.addEventListener('message', (event) => {
+      const data = event.data;
+      if (!data || !data.lat || !data.long || !data.state) return;
 
-  const newDataHash = generateDataHash(data);
-  if (newDataHash === currentDataHash) {
-    console.log("=== MAP: Data unchanged, skipping reload ===");
-    return;
-  }
-  currentDataHash = newDataHash;
+      const newDataHash = generateDataHash(data);
+      if (newDataHash === currentDataHash) {
+        console.log("⚠️ Data unchanged. Skipping reload.");
+        return;
+      }
+      currentDataHash = newDataHash;
 
-  // Preserve view before refreshing markers
-  const currentCenter = map.getCenter();
-  const currentZoom = map.getZoom();
-  const shouldSetInitialView = !initialViewSet;
+      const currentCenter = map.getCenter();
+      const currentZoom = map.getZoom();
+      const shouldSetInitialView = !initialViewSet;
 
-  markerCluster.clearLayers();
-  markerDataMap.clear();
-  const latLngs = [];
+      markerCluster.clearLayers();
+      markerDataMap.clear();
+      const latLngs = [];
 
-  for (let i = 0; i < data.lat.length; i++) {
-    const lat = parseFloat(data.lat[i]);
-    const lng = parseFloat(data.long[i]);
-    const label = decodeURIComponent(data.state[i]);
-    const count = data.count[i];
+      for (let i = 0; i < data.lat.length; i++) {
+        const lat = parseFloat(data.lat[i]);
+        const lng = parseFloat(data.long[i]);
+        const stateLabel = decodeURIComponent(data.state[i]);
+        const count = data.count[i];
 
-    if (!isNaN(lat) && !isNaN(lng)) {
-      const markerId = `${lat}_${lng}`;
-      const marker = L.marker([lat, lng])
-        .bindPopup(`<b>${label}</b><br>Count: ${count}`);
+        if (!isNaN(lat) && !isNaN(lng)) {
+          const markerId = `${lat}_${lng}`;
 
-      // --- 🟢 CLICK HANDLER FOR SINGLE MARKER ---
-      marker.on("click", function (e) {
-        L.DomEvent.stopPropagation(e);
-        console.log("🖱️ Marker clicked:", label);
-        const payload = {
-          type: "mapClick",
-          parentLocationName: data.state[i], // encoded
-          lat: lat,
-          long: lng,
-          count: count,
-          label: label
-        };
-        window.parent.postMessage(payload, "*");
+          // Create marker with tooltip
+          const tooltipText = `
+            <strong>State:</strong> ${stateLabel}<br/>
+            <strong>Lat:</strong> ${lat}<br/>
+            <strong>Long:</strong> ${lng}<br/>
+            <strong>Count:</strong> ${count}
+          `;
+
+          const marker = L.marker([lat, lng], {
+            title: stateLabel
+          });
+
+          marker.bindTooltip(tooltipText, {
+            direction: 'top',
+            permanent: false,
+            opacity: 0.9
+          });
+
+          // === 🔁 Marker click -> Send to Grafana ===
+          marker.on("click", function (e) {
+            L.DomEvent.stopPropagation(e);
+            const payload = {
+              type: "mapClick",
+              state: data.state[i], // still encoded for Grafana
+              lat: lat,
+              long: lng,
+              count: count,
+              label: stateLabel
+            };
+            window.parent.postMessage(payload, "*");
+            console.log("📤 Sent marker click to Grafana:", payload);
+          });
+
+          // Save for cluster click
+          markerDataMap.set(markerId, {
+            lat, lng,
+            state: data.state[i],
+            label: stateLabel,
+            count
+          });
+
+          markerCluster.addLayer(marker);
+          latLngs.push([lat, lng]);
+        }
+      }
+
+      // === Cluster click handler ===
+      markerCluster.on("clusterclick", function (a) {
+        const cluster = a.layer;
+        const markers = cluster.getAllChildMarkers();
+
+        if (markers.length > 0) {
+          const first = markers[0].getLatLng();
+          const markerId = `${first.lat}_${first.lng}`;
+          const markerData = markerDataMap.get(markerId);
+
+          if (markerData) {
+            const payload = {
+              type: "mapClick",
+              state: markerData.state,
+              lat: markerData.lat,
+              long: markerData.lng,
+              count: markerData.count,
+              label: `Cluster: ${markerData.label}`,
+              clusterSize: markers.length
+            };
+            window.parent.postMessage(payload, "*");
+            console.log("📤 Sent cluster click to Grafana:", payload);
+
+            // Optional: show popup at cluster
+            const popupText = `
+              <strong>Cluster Size:</strong> ${markers.length}<br/>
+              <strong>First State:</strong> ${markerData.label}<br/>
+              <strong>Lat:</strong> ${markerData.lat}<br/>
+              <strong>Long:</strong> ${markerData.lng}<br/>
+              <strong>Count:</strong> ${markerData.count}
+            `;
+            L.popup()
+              .setLatLng(a.latlng)
+              .setContent(popupText)
+              .openOn(map);
+          }
+        }
       });
 
-      markerDataMap.set(markerId, { lat, lng, label, count, state: data.state[i] });
-      markerCluster.addLayer(marker);
-      latLngs.push([lat, lng]);
-    }
-  }
-
-  // --- 🟡 CLUSTER CLICK HANDLER ---
-  markerCluster.on("clusterclick", function (a) {
-    const cluster = a.layer;
-    const markers = cluster.getAllChildMarkers();
-    if (markers.length > 0) {
-      const first = markers[0].getLatLng();
-      const markerId = `${first.lat}_${first.lng}`;
-      const markerData = markerDataMap.get(markerId);
-      if (markerData) {
-        console.log("🟢 Cluster clicked:", markerData.label);
-        const payload = {
-          type: "mapClick",
-          parentLocationName: markerData.state,
-          lat: markerData.lat,
-          long: markerData.lng,
-          count: markerData.count,
-          label: markerData.label,
-          clusterSize: markers.length
-        };
-        window.parent.postMessage(payload, "*");
+      // === Fit or restore map view ===
+      if (shouldSetInitialView && latLngs.length > 0) {
+        if (latLngs.length === 1) {
+          map.setView(latLngs[0], 10);
+        } else {
+          map.fitBounds(latLngs, { padding: [40, 40] });
+        }
+        initialViewSet = true;
+      } else {
+        map.setView(currentCenter, currentZoom, { animate: false });
       }
-    }
-  });
 
-  // --- Fit or preserve map view ---
-  if (shouldSetInitialView && latLngs.length > 0) {
-    if (latLngs.length === 1) map.setView(latLngs[0], 10);
-    else map.fitBounds(latLngs, { padding: [40, 40] });
-    initialViewSet = true;
-  } else {
-    map.setView(currentCenter, currentZoom, { animate: false });
-  }
+      console.log("✅ Markers updated:", latLngs.length);
+    });
 
-  console.log("✅ Markers rendered:", latLngs.length);
-});
-
-console.log("✅ MAP: Ready and waiting for data...");
-</script>
+    console.log("🟢 Map initialized and listening for Grafana data...");
+  </script>
 </body>
 </html>

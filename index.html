@@ -2,105 +2,139 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>World Map - Grafana Clustering</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Incident Map</title>
 
-<!-- Leaflet CSS -->
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
 
 <style>
-  body, html { margin:0; padding:0; height:100%; }
-  #map { width:100%; height:100%; }
+  html, body, #map { height: 100%; margin: 0; padding: 0; }
 </style>
 </head>
 <body>
 <div id="map"></div>
 
-<!-- Leaflet JS -->
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster/dist/leaflet.markercluster.js"></script>
 
 <script>
-// === Initialize map ===
-const map = L.map('map').setView([20, 0], 2);
+const map = L.map('map').setView([24.7136, 46.6753], 6);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18,
-  attribution: '&copy; OpenStreetMap contributors'
+  attribution: '© OpenStreetMap contributors'
 }).addTo(map);
 
-// === Cluster group ===
-const markers = L.markerClusterGroup();
-map.addLayer(markers);
+let markerCluster = L.markerClusterGroup();
+map.addLayer(markerCluster);
 
-// === State tracking ===
-let selectedMarker = null;
-let selectedMarkerData = null;
+let markerDataMap = new Map();
+let currentDataHash = null;
+let initialViewSet = false;
 
-// === Simple icon generator ===
-function createIcon(color) {
-  return new L.Icon({
-    iconUrl: `https://chart.googleapis.com/chart?chst=d_map_pin_icon&chld=pin|${color}`,
-    iconSize: [30, 50],
-    iconAnchor: [15, 50],
-    popupAnchor: [0, -45],
-  });
+// --- Utility: Create a data hash to detect identical data ---
+function generateDataHash(data) {
+  if (!data || !data.lat) return null;
+  const dataForHash = {
+    length: data.lat.length,
+    first: `${data.lat[0]}_${data.long[0]}_${data.state[0]}`,
+    last: `${data.lat[data.lat.length - 1]}_${data.long[data.lat.length - 1]}_${data.state[data.lat.length - 1]}`
+  };
+  return JSON.stringify(dataForHash);
 }
 
-// === Load Grafana data ===
-function loadData(dataArray) {
-  if (!dataArray || !dataArray.length) return;
-
-  markers.clearLayers();
-  selectedMarker = null;
-  selectedMarkerData = null;
-
-  dataArray.forEach((d) => {
-    if (!d.lat || !d.long) return;
-
-    const marker = L.marker([d.lat, d.long], { icon: createIcon('red') })
-      .bindPopup(`<b>${d.state}</b><br>Count: ${d.count}<br>Lat: ${d.lat.toFixed(4)}<br>Lon: ${d.long.toFixed(4)}`);
-
-    // === On marker click ===
-    marker.on('click', function () {
-      // Reset previously selected marker color
-      if (selectedMarker) selectedMarker.setIcon(createIcon('red'));
-
-      // Highlight this one
-      marker.setIcon(createIcon('blue'));
-      selectedMarker = marker;
-
-      // Store clicked marker data
-      selectedMarkerData = d;
-      console.log('🟢 Marker clicked:', selectedMarkerData);
-
-      // Send data back to Grafana (parent)
-      window.parent.postMessage(
-        {
-          type: 'mapClick',
-          data: selectedMarkerData,
-        },
-        '*'
-      );
-    });
-
-    markers.addLayer(marker);
-  });
-
-  // Fit bounds to visible markers
-  const group = new L.featureGroup(markers.getLayers());
-  if (group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.2));
-}
-
-// === Listen for Grafana message ===
+// === LISTEN FOR GRAFANA MESSAGES ===
 window.addEventListener('message', (event) => {
+  console.log("=== MAP: Message received from Grafana ===", event.data);
   const data = event.data;
-  if (!data || !data.incidentData) return;
-  console.log(`✅ Received ${data.incidentData.length} records from Grafana`);
-  loadData(data.incidentData);
+  if (!data || !data.lat || !data.long || !data.state) return;
+
+  const newDataHash = generateDataHash(data);
+  if (newDataHash === currentDataHash) {
+    console.log("=== MAP: Data unchanged, skipping reload ===");
+    return;
+  }
+  currentDataHash = newDataHash;
+
+  // Preserve view before refreshing markers
+  const currentCenter = map.getCenter();
+  const currentZoom = map.getZoom();
+  const shouldSetInitialView = !initialViewSet;
+
+  markerCluster.clearLayers();
+  markerDataMap.clear();
+  const latLngs = [];
+
+  for (let i = 0; i < data.lat.length; i++) {
+    const lat = parseFloat(data.lat[i]);
+    const lng = parseFloat(data.long[i]);
+    const label = decodeURIComponent(data.state[i]);
+    const count = data.count[i];
+
+    if (!isNaN(lat) && !isNaN(lng)) {
+      const markerId = `${lat}_${lng}`;
+      const marker = L.marker([lat, lng])
+        .bindPopup(`<b>${label}</b><br>Count: ${count}`);
+
+      // --- 🟢 CLICK HANDLER FOR SINGLE MARKER ---
+      marker.on("click", function (e) {
+        L.DomEvent.stopPropagation(e);
+        console.log("🖱️ Marker clicked:", label);
+        const payload = {
+          type: "mapClick",
+          parentLocationName: data.state[i], // encoded
+          lat: lat,
+          long: lng,
+          count: count,
+          label: label
+        };
+        window.parent.postMessage(payload, "*");
+      });
+
+      markerDataMap.set(markerId, { lat, lng, label, count, state: data.state[i] });
+      markerCluster.addLayer(marker);
+      latLngs.push([lat, lng]);
+    }
+  }
+
+  // --- 🟡 CLUSTER CLICK HANDLER ---
+  markerCluster.on("clusterclick", function (a) {
+    const cluster = a.layer;
+    const markers = cluster.getAllChildMarkers();
+    if (markers.length > 0) {
+      const first = markers[0].getLatLng();
+      const markerId = `${first.lat}_${first.lng}`;
+      const markerData = markerDataMap.get(markerId);
+      if (markerData) {
+        console.log("🟢 Cluster clicked:", markerData.label);
+        const payload = {
+          type: "mapClick",
+          parentLocationName: markerData.state,
+          lat: markerData.lat,
+          long: markerData.lng,
+          count: markerData.count,
+          label: markerData.label,
+          clusterSize: markers.length
+        };
+        window.parent.postMessage(payload, "*");
+      }
+    }
+  });
+
+  // --- Fit or preserve map view ---
+  if (shouldSetInitialView && latLngs.length > 0) {
+    if (latLngs.length === 1) map.setView(latLngs[0], 10);
+    else map.fitBounds(latLngs, { padding: [40, 40] });
+    initialViewSet = true;
+  } else {
+    map.setView(currentCenter, currentZoom, { animate: false });
+  }
+
+  console.log("✅ Markers rendered:", latLngs.length);
 });
 
-console.log('🗺️ Map initialized and waiting for Grafana data...');
+console.log("✅ MAP: Ready and waiting for data...");
 </script>
 </body>
 </html>

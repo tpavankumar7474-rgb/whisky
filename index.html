@@ -29,36 +29,78 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
-// Marker cluster group
+// === Cluster group ===
 const markers = L.markerClusterGroup();
 map.addLayer(markers);
 
-// === Function to load Grafana data ===
-function loadData(dataArray){
+// === State tracking ===
+let selectedMarker = null;
+let selectedMarkerData = null;
+
+// === Simple icon generator ===
+function createIcon(color) {
+  return new L.Icon({
+    iconUrl: `https://chart.googleapis.com/chart?chst=d_map_pin_icon&chld=pin|${color}`,
+    iconSize: [30, 50],
+    iconAnchor: [15, 50],
+    popupAnchor: [0, -45],
+  });
+}
+
+// === Load Grafana data ===
+function loadData(dataArray) {
   if (!dataArray || !dataArray.length) return;
 
   markers.clearLayers();
+  selectedMarker = null;
+  selectedMarkerData = null;
 
-  dataArray.forEach(d => {
+  dataArray.forEach((d) => {
     if (!d.lat || !d.long) return;
 
-    const marker = L.marker([d.lat, d.long])
+    const marker = L.marker([d.lat, d.long], { icon: createIcon('red') })
       .bindPopup(`<b>${d.state}</b><br>Count: ${d.count}<br>Lat: ${d.lat.toFixed(4)}<br>Lon: ${d.long.toFixed(4)}`);
+
+    // === On marker click ===
+    marker.on('click', function () {
+      // Reset previously selected marker color
+      if (selectedMarker) selectedMarker.setIcon(createIcon('red'));
+
+      // Highlight this one
+      marker.setIcon(createIcon('blue'));
+      selectedMarker = marker;
+
+      // Store clicked marker data
+      selectedMarkerData = d;
+      console.log('🟢 Marker clicked:', selectedMarkerData);
+
+      // Send data back to Grafana (parent)
+      window.parent.postMessage(
+        {
+          type: 'mapClick',
+          data: selectedMarkerData,
+        },
+        '*'
+      );
+    });
+
     markers.addLayer(marker);
   });
 
-  // Fit bounds to data
+  // Fit bounds to visible markers
   const group = new L.featureGroup(markers.getLayers());
   if (group.getLayers().length > 0) map.fitBounds(group.getBounds().pad(0.2));
 }
 
 // === Listen for Grafana message ===
-window.addEventListener("message", (event) => {
+window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || !data.incidentData) return;
   console.log(`✅ Received ${data.incidentData.length} records from Grafana`);
   loadData(data.incidentData);
 });
+
+console.log('🗺️ Map initialized and waiting for Grafana data...');
 </script>
 </body>
 </html>

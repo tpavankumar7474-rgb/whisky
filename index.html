@@ -1,18 +1,21 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Map Iframe</title>
+  <title>Interactive Map Iframe</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster/dist/MarkerCluster.Default.css" />
+
   <style>
     html, body, #map {
       height: 100%;
       margin: 0;
       padding: 0;
     }
+
     .leaflet-tooltip {
       background-color: rgba(0, 0, 0, 0.75);
       color: #fff;
@@ -39,33 +42,48 @@
     const clusterGroup = L.markerClusterGroup();
     map.addLayer(clusterGroup);
 
-    // Maintain marker info
+    // === Marker icons ===
+    const defaultIcon = L.icon({
+      iconUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-icon.png",
+      shadowUrl: "https://unpkg.com/leaflet@1.9.3/dist/images/marker-shadow.png",
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      shadowSize: [41, 41]
+    });
+
+    const selectedIcon = L.icon({
+      iconUrl: "https://maps.google.com/mapfiles/ms/icons/yellow-dot.png",
+      iconSize: [32, 32],
+      iconAnchor: [16, 32]
+    });
+
+    let selectedMarker = null; // Track selected marker
     let markerDataMap = new Map();
 
-    console.log("Iframe map initialized and waiting for parent data...");
+    console.log("Iframe map initialized, waiting for Grafana data...");
 
-    // === Listen for data from parent (Grafana) ===
+    // === Receive data from Grafana parent ===
     window.addEventListener("message", (event) => {
-      console.log("Iframe: message received from parent:", event.data);
       const data = event.data;
       if (!data || !data.incidentData) {
-        console.warn("Iframe: no incidentData found in message");
+        console.warn("Iframe: No incidentData found in message");
         return;
       }
 
       const arr = data.incidentData;
-      console.log("Iframe: incidentData array:", arr);
+      console.log("Iframe: incidentData received:", arr);
 
       clusterGroup.clearLayers();
       markerDataMap.clear();
+      selectedMarker = null;
 
       let bounds = [];
 
-      arr.forEach((d, idx) => {
+      arr.forEach((d) => {
         const { state, lat, long, count } = d;
         if (lat == null || long == null) return;
 
-        // Tooltip
         const tooltip = `
           <strong>Location:</strong> ${state}<br/>
           <strong>Latitude:</strong> ${lat}<br/>
@@ -73,23 +91,40 @@
           <strong>Count:</strong> ${count}
         `;
 
-        const marker = L.marker([lat, long], { title: state });
-        marker.bindTooltip(tooltip, {
-          direction: "top",
-          permanent: false,
-          opacity: 0.9
-        });
+        const marker = L.marker([lat, long], { title: state, icon: defaultIcon });
+        marker.bindTooltip(tooltip, { direction: "top", opacity: 0.9 });
 
-        // On marker click, send to parent
+        // === Marker click handler ===
         marker.on("click", () => {
-          const payload = {
-            type: "mapVariableUpdate",
-            LOCATIONNAME: state,
-            Latitude: lat,
-            Longitude: long
-          };
-          window.parent.postMessage(payload, "*");
-          console.log("Iframe: marker clicked, payload sent to parent:", payload);
+          // If same marker clicked again → deselect
+          if (selectedMarker === marker) {
+            marker.setIcon(defaultIcon);
+            selectedMarker = null;
+            const payload = {
+              type: "mapVariableReset",
+              LOCATIONNAME: "All",
+              Latitude: "All",
+              Longitude: "All"
+            };
+            window.parent.postMessage(payload, "*");
+            console.log("Marker deselected → Variables reset:", payload);
+          } else {
+            // Deselect previous marker
+            if (selectedMarker) selectedMarker.setIcon(defaultIcon);
+
+            // Highlight new marker
+            marker.setIcon(selectedIcon);
+            selectedMarker = marker;
+
+            const payload = {
+              type: "mapVariableUpdate",
+              LOCATIONNAME: state,
+              Latitude: lat,
+              Longitude: long
+            };
+            window.parent.postMessage(payload, "*");
+            console.log("Marker selected → Variables updated:", payload);
+          }
         });
 
         clusterGroup.addLayer(marker);
@@ -97,36 +132,14 @@
         bounds.push([lat, long]);
       });
 
-      // === Cluster Click (show info but do not update variables) ===
-      clusterGroup.on("clusterclick", (a) => {
-        const markers = a.layer.getAllChildMarkers();
-        if (markers.length > 0) {
-          const first = markers[0].getLatLng();
-          const popup = `
-            <strong>Cluster size:</strong> ${markers.length}<br/>
-            <strong>Example location:</strong> ${markers[0].options.title}<br/>
-            <strong>Lat:</strong> ${first.lat}<br/>
-            <strong>Long:</strong> ${first.lng}
-          `;
-          L.popup()
-            .setLatLng(a.latlng)
-            .setContent(popup)
-            .openOn(map);
-          console.log("Iframe: cluster clicked — popup shown (no Grafana update)");
-        }
-      });
-
-      // === Fit bounds ===
+      // Fit to bounds
       if (bounds.length > 0) {
         const b = L.latLngBounds(bounds);
         map.fitBounds(b, { padding: [40, 40] });
-      } else {
-        console.warn("Iframe: No valid lat/long bounds found");
       }
     });
 
-    // === Debug message ===
-    console.log("Iframe map fully ready, waiting for incidentData...");
+    console.log("Iframe map ready — waiting for incidentData from Grafana...");
   </script>
 </body>
 </html>

@@ -1,4 +1,39 @@
 <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Parent Page with Map Iframe and Variable Updates</title>
+  <style>
+    body, html {
+      height: 100%;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      font-family: Arial, sans-serif;
+    }
+    #variables {
+      padding: 10px;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+    }
+    iframe {
+      flex-grow: 1;
+      width: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="variables">
+    <strong>Selected Location:</strong>
+    <span id="locationName">None</span><br/>
+    <strong>Latitude:</strong> <span id="latitude">N/A</span><br/>
+    <strong>Longitude:</strong> <span id="longitude">N/A</span>
+  </div>
+
+  <iframe id="mapIframe" srcdoc='
+<!DOCTYPE html>
 <html>
 <head>
   <title>Map Iframe</title>
@@ -10,8 +45,7 @@
   <style>
     html, body, #map {
       height: 100%;
-      margin: 0;
-      padding: 0;
+      margin: 0; padding: 0;
     }
   </style>
 </head>
@@ -31,45 +65,24 @@
     const clusterGroup = L.markerClusterGroup();
     map.addLayer(clusterGroup);
 
-    let markerDataMap = new Map();
-
-    // Listen for messages from parent
     window.addEventListener("message", (event) => {
-      console.log("Iframe: message received:", event.data);
       const data = event.data;
-      if (!data || !data.incidentData) {
-        console.warn("Iframe: no incidentData in message");
-        return;
-      }
+      if (!data || !data.incidentData) return;
       const arr = data.incidentData;
-      console.log("Iframe: incidentData array:", arr);
 
       clusterGroup.clearLayers();
-      markerDataMap.clear();
 
       let bounds = [];
 
-      arr.forEach((d, idx) => {
+      arr.forEach((d) => {
         const { state, lat, long, count } = d;
         if (lat == null || long == null) return;
 
-        const tooltip = `
-          <strong>State:</strong> ${state}<br/>
-          <strong>Lat:</strong> ${lat}<br/>
-          <strong>Long:</strong> ${long}<br/>
-          <strong>Count:</strong> ${count}
-        `;
+        const tooltip = `<strong>State:</strong> ${state}<br/><strong>Lat:</strong> ${lat}<br/><strong>Long:</strong> ${long}<br/><strong>Count:</strong> ${count}`;
 
-        const marker = L.marker([lat, long], {
-          title: state
-        });
-        marker.bindTooltip(tooltip, {
-          direction: "top",
-          permanent: false,
-          opacity: 0.9
-        });
+        const marker = L.marker([lat, long], { title: state });
+        marker.bindTooltip(tooltip, { direction: "top", permanent: false, opacity: 0.9 });
 
-        // ONLY single marker clicks send message to parent
         marker.on("click", (e) => {
           const payload = {
             type: "mapClick",
@@ -77,7 +90,7 @@
             lat: lat,
             long: long,
             count: count,
-            label: state
+            label: state,
           };
           window.parent.postMessage(payload, "*");
           console.log("Iframe: marker clicked, payload:", payload);
@@ -87,34 +100,50 @@
         bounds.push([lat, long]);
       });
 
-      // CLUSTER CLICK: do NOT send variable update, just open popup
       clusterGroup.on("clusterclick", (a) => {
         const markers = a.layer.getAllChildMarkers();
-        if (markers.length > 0) {
+        if (markers.length) {
           const first = markers[0].getLatLng();
-          const popup = `
-            <strong>Cluster size:</strong> ${markers.length}<br/>
-            <strong>First state:</strong> ${markers[0].options.title}<br/>
-            <strong>Lat:</strong> ${first.lat}<br/>
-            <strong>Long:</strong> ${first.lng}
-          `;
-          L.popup()
-            .setLatLng(a.latlng)
-            .setContent(popup)
-            .openOn(map);
-
+          const popup = `<strong>Cluster size:</strong> ${markers.length}<br/><strong>First state:</strong> ${markers[0].options.title}<br/><strong>Lat:</strong> ${first.lat}<br/><strong>Long:</strong> ${first.lng}`;
+          L.popup().setLatLng(a.latlng).setContent(popup).openOn(map);
           console.log("Iframe: cluster clicked, popup shown but no variable update");
-          // NOTE: NO window.parent.postMessage here
         }
       });
 
-      if (bounds.length > 0) {
-        const b = L.latLngBounds(bounds);
-        map.fitBounds(b, { padding: [40, 40] });
+      if (bounds.length) {
+        map.fitBounds(L.latLngBounds(bounds), { padding: [40, 40] });
       }
     });
 
     console.log("Iframe map page initialized, waiting for parent message...");
+  </script>
+</body>
+</html>'></iframe>
+
+  <script>
+    // Variables display elements
+    const locationNameEl = document.getElementById("locationName");
+    const latitudeEl = document.getElementById("latitude");
+    const longitudeEl = document.getElementById("longitude");
+
+    // Listen for messages from iframe
+    window.addEventListener("message", (event) => {
+      const data = event.data;
+      if (data && data.type === "mapClick") {
+        // Update variables and display
+        const { state, lat, long } = data;
+        locationNameEl.textContent = state;
+        latitudeEl.textContent = lat.toFixed(6);
+        longitudeEl.textContent = long.toFixed(6);
+      }
+    });
+
+    // Example: send some data to iframe to test (optional)
+    // const exampleData = [
+    //   { state: "California", lat: 36.7783, long: -119.4179, count: 10 },
+    //   { state: "Texas", lat: 31.9686, long: -99.9018, count: 5 },
+    // ];
+    // document.getElementById("mapIframe").contentWindow.postMessage({ incidentData: exampleData }, "*");
   </script>
 </body>
 </html>
